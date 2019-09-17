@@ -1,0 +1,111 @@
+# Script:Finish the OneDrive4Business migration
+# Author: Yuhong Liu
+# Input file: List of the users who wolud be performed migration from Home Directory to OneDriveForBusiness MySite(The list should be E-Mail list format, in our case givenname.surname@primetals.com)
+# Attention: The user to be provisioned should have sharepoint licence
+# Necessary Modules should be added before the script running
+
+function CopyFolder2OneDrive{
+   Param(
+        [Parameter(Mandatory=$True)]
+        [String]
+        $DocLibName,
+        
+        [Parameter(Mandatory=$True)]
+        [String]
+        $Path,
+
+        [Parameter(Mandatory=$True)]
+        [String]
+        $foldername
+        )
+   $List = $Context.Web.Lists.GetByTitle($DocLibName)
+
+    $Context.Load($List.RootFolder)
+    $Context.ExecuteQuery()
+
+   #Copy files at first
+   Foreach($File in (dir $Path -File)){
+        $FileStream = New-Object IO.FileStream($File.FullName,[System.IO.FileMode]::Open)
+        $FileCreationInfo = New-Object Microsoft.SharePoint.Client.FileCreationInformation
+        $FileCreationInfo.Overwrite = $true
+        $FileCreationInfo.ContentStream = $FileStream
+        $FileCreationInfo.URL = $File
+        if($foldername -eq $null)
+        {
+            $Upload = $List.RootFolder.Files.Add($FileCreationInfo)
+        }
+        Else
+        {
+
+            $ServerRelativeUrlOfRootFolder = $List.RootFolder.ServerRelativeUrl
+            $uploadFolderUrl=  $ServerRelativeUrlOfRootFolder+"/"+$foldername
+            $targetFolder = $Context.Web.GetFolderByServerRelativeUrl($uploadFolderUrl)
+            $Upload = $targetFolder.Files.Add($FileCreationInfo)
+        }
+
+        $Context.Load($Upload)
+        $Context.ExecuteQuery()
+
+    }
+
+    #Select only folders
+    foreach($Folder0 in (dir -Directory $Path)){
+        $Path0=$Path+"\"+$Folder0
+        #Create folder $Folder0 on OneDirve MySite   
+        $newFolder=$Folder0    
+
+        Add-PnPFolder -Name $newFolder -Folder "Documents/$foldername" -ErrorAction SilentlyContinue 
+        $j=0
+        do{
+            $j++
+             $newFolderCreates=Get-PnPFolder -RelativeUr "Documents/$foldername/$newFolder" -ErrorAction SilentlyContinue
+
+            }until($j -eq 10 -or $newFolderCreates.Length -gt 0)
+
+ 
+        $foldername0=$foldername+"/"+$Folder0
+        
+        CopyFolder2OneDrive $DocLibName $Path0 $foldername0
+    }
+
+}
+ 
+$User="xxxx@xxxxxxxxxx.com"
+$SiteURL = "https://xxxxxx-my.sharepoint.com/personal/xxxxxx_xxx_xxxxxxxxxxx_com";
+
+#DocDocLibName is document libary name 
+$DocLibName = "Documents"
+
+$Password  = ConvertTo-SecureString 'xxxxxxxx' -AsPlainText -Force
+#Bind to site collection
+$Context = New-Object Microsoft.SharePoint.Client.ClientContext($SiteURL)
+$Creds = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($User,$Password)
+
+$Context.Credentials = $Creds
+$Context.ExecuteQuery()
+
+$web=$Context.Web
+$Context.Load($web)
+$Context.ExecuteQuery()
+
+#Retrieve list
+$List = $Context.Web.Lists.GetByTitle($DocLibName)
+
+$Context.Load($List.RootFolder)
+$Context.ExecuteQuery()
+
+$orgName="xxxxxxxx"
+$filtermultipleMySites = "https://$orgName-my.sharepoint.com/personal/"
+$givenname="xxxx"
+$MySiteUrl="-my.sharepoint.com/personal/"+$givenname+"_"+$surname+"_"+$orgName+"_com"
+$SPOUrl="https://"+$orgName+$MySiteUrl
+Connect-PnPOnline -url $SPOUrl  -UseWebLogin
+$foldername="HS_"+$givenname    
+
+$OutputPath="D:xxxx\xxxxx\OUT"
+$GlobalLog = "$OutputPath\ODfB_Migrati_$(Get-Date -Format yyyy-MM-dd)_$(Get-Date -Format HH_mm_ss).log" 
+Start-Transcript $GlobalLog
+
+CopyFolder2OneDrive $DocLibName "H:" $foldername
+
+Stop-Transcript 
