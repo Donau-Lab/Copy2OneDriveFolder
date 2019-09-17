@@ -1,3 +1,3 @@
 # Copy2OneDriveFolder
-Copy files from folder/Directory to oneDriveforBusinessFolder
-After file uploading finished, files/folders between the home share and the onedirve mySite will be compared
+This is a project on OneDriveforBusiness migration
+The goal is move all share files to SharePointOnline Page. PowerShell Scritps are performed to finish the requirements.
