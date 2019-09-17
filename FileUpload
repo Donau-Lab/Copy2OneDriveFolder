@@ -1,6 +1,6 @@
 # Script:Finish the OneDrive4Business migration
 # Author: Yuhong Liu
-# Input file: List of the users who wolud be performed migration from Home Directory to OneDriveForBusiness MySite(The list should be E-Mail list format, in our case givenname.surname@primetals.com)
+# Input file: List of the users who wolud be performed migration from Home Directory to OneDriveForBusiness MySite(The list should be E-Mail list format, in our case givenname.surname@xxxxxx.com)
 # Attention: The user to be provisioned should have sharepoint licence
 # Necessary Modules should be added before the script running
 
