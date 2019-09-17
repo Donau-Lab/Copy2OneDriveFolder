@@ -1,0 +1,199 @@
+# Script:Prepare the OneDrive4Business migration
+# Author: Yuhong Liu
+# Input file: List of the users who wolud be performed migration from Home Directory to OneDriveForBusiness MySite(The list should be E-Mail list format, in our case givenname.surname@primetals.com)
+# Attention: The user to be provisioned should habe sharepoint licence
+# Necessary Modules should be added before the script running
+
+# All log file are saved in D:\xxxxxx\OUT: This folder should be empty,otherwise fiels will be overwritten
+$CSVInput="D:\xxx\IN\Provision.csv"
+$OutputPath="D:\xxxx\OUT"
+$GlobalLog = "$OutputPath\ODfB_MySitePovisioning_$(Get-Date -Format yyyy-MM-dd)_$(Get-Date -Format HH_mm_ss).log"
+$LogFolder="\$(Get-Date -UFormat '%Y-%m-%d')"
+
+$orgName="xxxxxx"
+$filtermultipleMySites = "https://$orgName-my.sharepoint.com/personal/"
+$LoginAdmin="xxxxxx@pmt.xxxxxxxxxxx.net"
+
+$MyInput=Import-Csv $CSVInput
+$MailList=@()
+
+function New-ListItem {
+    $obj = New-Object psobject
+    Add-Member -InputObject $obj -MemberType NoteProperty -Name "User" -Value "-"
+    Add-Member -InputObject $obj -MemberType NoteProperty -Name "MySite created" -Value "$false"
+    Add-Member -InputObject $obj -MemberType NoteProperty -Name "MySite URL" -Value "-"
+    return $obj
+}
+
+function New-ErrorItem {
+    param(
+        [Parameter(Position = 0, Mandatory = $true)][string]$Exception
+    )
+
+    $obj = New-Object psobject
+    
+    Add-Member -InputObject $obj -MemberType NoteProperty -Name "Exception" -Value $Exception
+    return $obj
+}
+
+Import-csv $CSVInput |ForEach-Object{$MailList +=$_.Email}
+
+#Add the necessary modules' dll
+
+Connect-SPOService  https://xxxxxxx-admin.SharePoint.com
+Start-Transcript $GlobalLog
+
+for($count=0;$count -lt $MailList.Length;$count++){  
+    $mail=$MailList.Item($count) 
+   
+    $Results = @()
+    $allErrors = @()
+
+    $NewSite=@()
+    $ErrorSite=@()
+    $newCreateFolder=@()
+    $ErrorCreateFolder=@()
+
+    $obj = New-ListItem
+    $obj.User = $mail
+    
+    $index=$mail.IndexOf("@")
+    $name=$mail.Substring(0,$index)
+
+    $index1=$name.IndexOf(".")
+    $givenname=$name.Substring(0,$index1)
+    $surname=$name.Substring($($name.Length-$($name.Length-$index1)+1))
+    $MySiteUrl="-my.sharepoint.com/personal/"+$givenname+"_"+$surname+"_"+$orgName+"_com"
+    $obj.'MySite URL'=$orgName+$MySiteUrl
+    
+    $TemporaryName=@($givenname,$surname)
+    $referenzRegex = [string]::Join('|', $TemporaryName)
+    $Active=Get-ADUser -Filter 'Enabled -eq $True' -Property Name,CanonicalName,CN,DisplayName,DistinguishedName,ProfilePath,SamAccountName,UserPrincipalName,homedirectory -ErrorAction SilentlyContinue |WHERE-object UserPrincipalName -match $referenzRegex  |select Homedirectory,Enabled -ErrorAction SilentlyContinue
+    if($Active){
+        $mysite=Get-SPOSite -IncludePersonalSite $true -Limit all -Filter "Url -like '*$MySiteUrl*'" -ErrorAction SilentlyContinue   
+        if($mysite.Length -eq 0){
+        
+            Request-SPOPersonalSite –UserEmails $mail -ErrorAction SilentlyContinue
+            Write-Output "Create MySite....$($obj.'MySite URL')"
+            $i=0
+            do{
+            #
+                $i++
+                $personalSite = Microsoft.Online.SharePoint.PowerShell\Get-SPOSite -Verbose -IncludePersonalSite $true -Limit All -Filter "Url -like '*$MySiteUrl*'" -ErrorAction SilentlyContinue
+                #Write-Output "||-->$i"
+             }until($personalSite.Length -gt 0 -or $i -eq 10)
+          
+            if($i -eq 10 -and $personalSite.Length -eq 0){
+                Write-Output ("Mysite for "+$mail+ " can not be created.Possibly no licence for this user or not an active user")
+                $Info=@{Mail=$mail}
+                $ErrorSite+=New-Object PSObject -Property $Info -ErrorAction SilentlyContinue
+                $ErrorSite|Export-Csv -Encoding Unicode "$OutputPath\ODfB_SiteErrors.csv" -Delimiter ";" -Force -NoTypeInformation -Append
+            }
+            if($personalSite.Length -gt 0) {
+                Write-Output ("Mysite for "+$mail+ " created successfully")
+                $Info=@{Mail=$mail}
+                $NewSite+=New-Object PSObject -Property $Info -ErrorAction SilentlyContinue
+                $NewSite|Export-Csv -Encoding Unicode "$OutputPath\ODfB_Site.csv" -Delimiter ";" -Force -NoTypeInformation -Append
+            }
+      }
+      else{
+        
+        $Info="Mysite for "+$mysite.Owner+" exists,a new folder will be created"
+        Write-Output ($Info)
+        $temp="https://xxxxxxxx$MySiteUrl"
+        Set-SPOUser -Site "https://xxxxxxxx$MySiteUrl" -LoginName $LoginAdmin -IsSiteCollectionAdmin $True -ErrorAction SilentlyContinue -InformationAction SilentlyContinue
+        Connect-PnPOnline -Url "https://xxxxxxx$MySiteUrl" -UseWebLogin 
+        $j=0
+        $newFolder="HS_"+$givenname
+        $newFolderExists=Get-PnPFolder -RelativeUr "Documents/$newFolder" -ErrorAction SilentlyContinue
+        if($newFolderExists.Length -eq 0){
+            Add-PnPFolder -Name $newFolder -Folder "Documents" -ErrorAction SilentlyContinue
+            do{
+                $j++
+                $newFolderCreates=Get-PnPFolder -RelativeUr "Documents/$newFolder" -ErrorAction SilentlyContinue
+           
+           # Write-Output "||-->$j"
+            }until($j -eq 10 -or $newFolderCreates.Length -gt 0)
+       
+            if($newFolderCreates.Length -eq 0 -and $j -eq 20){
+                Write-Output ("Folder $newFolder cann't be created! ")
+                $Info1=@{Mail=$mail
+                        }
+                $ErrorCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                $ErrorCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_ErrorFolder.csv" -Delimiter ";" -Force -NoTypeInformation -Append
+            }
+        
+            if($newFolderCreates.Length -gt 0){
+                Write-Output ("Folder $newFolder created! ")
+                $Info1=@{Mail=$mail
+                Folder=$newFolder
+                }
+                $newCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                $newCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_Folder.csv" -Delimiter ";" -Force -NoTypeInformation -Append     
+            }            
+        }  
+        else{
+            $newFolder="HS_"+$givenname+"_1"
+            $newFolderExists=Get-PnPFolder -RelativeUr "Documents/$newFolder" -ErrorAction SilentlyContinue
+            if($newFolderExists.Length -eq 0){
+                Add-PnPFolder -Name $newFolder -Folder "Documents" -ErrorAction SilentlyContinue
+                $j=0
+                do{
+                    $j++
+                    $newFolderCreates=Get-PnPFolder -RelativeUr "Documents/$newFolder" -ErrorAction SilentlyContinue
+           
+           # Write-Output "||-->$j"
+                    }until($j -eq 10 -or $newFolderCreates.Length -gt 0)
+       
+                if($newFolderCreates.Length -eq 0 -and $j -eq 20){
+                    Write-Output ("Folder $newFolder cann't be created! ")
+                    $Info1=@{Mail=$mail}
+                    $ErrorCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                    $ErrorCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_ErrorFolder.csv" -Delimiter ";" -Force -NoTypeInformation -Append
+                }
+        
+                if($newFolderCreates.Length -gt 0){
+                    Write-Output ("Folder $newFolder created! ")
+                    $Info1=@{Mail=$mail
+                    Folder=$newFolder
+                     }
+                    $newCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                    $newCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_Folder.csv" -Delimiter ";" -Force -NoTypeInformation -Append     
+                }
+            }
+            else{
+                $newFolder="HS_"+$givenname+"_2"
+                Add-PnPFolder -Name $newFolder -Folder "Documents" -ErrorAction SilentlyContinue
+                 $j=0
+                do{
+                    $j++
+                    $newFolderCreates=Get-PnPFolder -RelativeUr "Documents/$newFolder" -ErrorAction SilentlyContinue
+           
+           # Write-Output "||-->$j"
+                    }until($j -eq 10 -or $newFolderCreates.Length -gt 0)
+       
+                if($newFolderCreates.Length -eq 0 -and $j -eq 20){
+                    Write-Output ("Folder $newFolder cann't be created! ")
+                    $Info1=@{Mail=$mail}
+                    $ErrorCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                    $ErrorCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_ErrorFolder.csv" -Delimiter ";" -Force -NoTypeInformation -Append
+                }
+        
+                if($newFolderCreates.Length -gt 0){
+                    Write-Output ("Folder $newFolder created! ")
+                    $Info1=@{Mail=$mail
+                    Folder=$newFolder
+                     }
+                    $newCreateFolder+=New-Object PSObject -Property $Info1 -ErrorAction SilentlyContinue
+                    $newCreateFolder |Export-Csv -Encoding Unicode "$OutputPath\ODfB_Folder.csv" -Delimiter ";" -Force -NoTypeInformation -Append     
+                }
+            }
+        }   
+        #After Site provision or folder created, second admin will be removed   
+        # Set-SPOUser -Site "https://xxxxxxxxxx$MySiteUrl" -LoginName $LoginAdmin -IsSiteCollectionAdmin $false -ErrorAction SilentlyContinue     
+       }
+    }
+ 
+}
+
+Stop-Transcript 
