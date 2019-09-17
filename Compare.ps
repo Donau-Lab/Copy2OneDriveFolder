@@ -1,0 +1,76 @@
+# Script:Compare files/folders on SharePointOnline folder with local share 1-1,
+# Author: Yuhong Liu
+# Input file: List of the users who wolud be performed migration from Home Directory to OneDriveForBusiness MySite(The list should be E-Mail list format, in our case givenname.surname@xxxxxxx.com)
+# Necessary Modules should be added before the script running
+function GetOneDriveFile{
+   Param(
+        [Parameter(Mandatory=$True)]
+        [String]
+        $foldername
+        )
+  
+ #folderName: Folder on homeshare, local machine etc.
+   $FolderItem=Get-PnPFolderItem -FolderSiteRelativeUrl "Documents/$foldername" -ItemType Folder -ErrorAction SilentlyContinue
+    $FileItem=Get-PnPFolderItem -FolderSiteRelativeUrl "Documents/$foldername" -ItemType File -ErrorAction SilentlyContinue
+    
+   Foreach($Item in $FileItem){
+     $FilesInfo=@()
+        if($Item -ne $null)
+        {
+            
+            Write-Host $foldername,$Item.Name,$Item.Length 
+             $Info=@{Folder=$foldername
+                    File=$Item.Name
+                    Length=$Item.Length 
+                        }
+            $FilesInfo+=New-Object PSObject -Property $Info -ErrorAction SilentlyContinue
+            $FilesInfo |Select-Object "Folder","File","Length" |Export-Csv -Encoding Unicode "$OutputPath\OneDriveFiles.csv" -Delimiter ";" -Force -NoTypeInformation -Append 
+        }      
+    }
+    #Select only folders
+    foreach($Folder0 in $FolderItem){  
+        $Folder=$Folder0.Name          
+        $foldername0="$foldername/$Folder"      
+        GetOneDriveFile $foldername0
+    }
+}
+
+$User="xxxxx@xxxxxxxx.com"
+$SiteURL = "https://xxxxxxxx-my.sharepoint.com/personal/xxxxxx_xxx_xxxxxxx_com";
+#DocDocLibName is document libary name 
+
+$Password  = ConvertTo-SecureString 'xxxxxxxxxxxx' -AsPlainText -Force
+#Bind to site collection
+$Context = New-Object Microsoft.SharePoint.Client.ClientContext($SiteURL)
+$Creds = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($User,$Password)
+
+$Context.Credentials = $Creds
+$Context.ExecuteQuery()
+
+$web=$Context.Web
+$Context.Load($web)
+$Context.ExecuteQuery()
+
+#Retrieve list
+$List = $Context.Web.Lists.GetByTitle($DocLibName)
+
+$Context.Load($List.RootFolder)
+$Context.ExecuteQuery()
+
+$OutputPath="D:\xxxxxxx\OUT"
+$orgName="xxxxxxxx"
+$filtermultipleMySites = "https://$orgName-my.sharepoint.com/personal/"
+$givenname="xxxxxx"
+$surname="xxx"
+$MySiteUrl="-my.sharepoint.com/personal/"+$givenname+"_"+$surname+"_"+$orgName+"_com"
+$SPOUrl="https://"+$orgName+$MySiteUrl
+Connect-PnPOnline -url $SPOUrl  -UseWebLogin
+$foldername="HS_"+$givenname  
+
+$OutputPath="D:\xxxxxxxx\OUT"
+$GlobalLog = "$OutputPath\ODfB_Migrati_$(Get-Date -Format yyyy-MM-dd)_$(Get-Date -Format HH_mm_ss).log" 
+Start-Transcript $GlobalLog
+
+GetOneDriveFile $foldername
+
+Stop-Transcript 
